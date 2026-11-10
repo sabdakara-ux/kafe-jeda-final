@@ -811,6 +811,17 @@ const ViewTables = ({ tables, confirmAction, showToast, simulateScan }) => {
   const [qrModal, setQrModal] = useState(null);
 
   const addTable = async () => {
+    // --- CEK KONEKSI DATABASE ---
+    if (supabaseUrl === 'https://placeholder.supabase.co') {
+      showToast('GAGAL: Kunci tidak terbaca! Anda wajib REDEPLOY di Vercel (atau cek file .env.local jika di VS Code)', 'error');
+      return;
+    }
+    if (!supabaseUrl.startsWith('http')) {
+      showToast('GAGAL: URL Supabase salah! Harus berawalan https:// (Perbaiki di Vercel lalu Redeploy)', 'error');
+      return;
+    }
+    // -----------------------------
+
     const numStr = (tables.length + 1).toString().padStart(2, '0');
     const newTable = {
       id: `t${Date.now()}`,
@@ -825,6 +836,7 @@ const ViewTables = ({ tables, confirmAction, showToast, simulateScan }) => {
   };
 
   const toggleTable = async (t) => {
+    if (supabaseUrl === 'https://placeholder.supabase.co') return showToast('GAGAL: Kunci tidak terbaca. Wajib Redeploy Vercel!', 'error');
     const { error } = await supabase.from('tables').update({ active: !t.active }).eq('id', t.id);
     if(error) showToast('Gagal: ' + error.message, 'error');
   };
