@@ -105,6 +105,7 @@ const Modal = ({ isOpen, onClose, title, children }) => {
 // ==========================================
 export default function App() {
   const [user, setUser] = useState(null);
+  const [authError, setAuthError] = useState(null);
   const [products, setProducts] = useState([]);
   const [tables, setTables] = useState([]);
   const [orders, setOrders] = useState([]);
@@ -146,6 +147,8 @@ export default function App() {
         }
       } catch (error) {
         console.error("Gagal Authentikasi Firebase:", error);
+        setAuthError(error.message);
+        setIsLoading(false);
       }
     };
     initAuth();
@@ -243,6 +246,23 @@ export default function App() {
 
   // --- CASHIER MODE ---
   const pendingOrdersCount = orders.filter(o => o.status === 'pending').length;
+
+  if (authError) {
+    return (
+      <div className="h-screen flex flex-col items-center justify-center bg-[#f5f0eb] p-6 text-center">
+        <div className="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full border-t-4 border-red-500">
+          <Icons.X size={48} className="mx-auto text-red-500 mb-4" />
+          <h2 className="text-xl font-bold text-stone-800 mb-2">Koneksi Database Ditolak</h2>
+          <p className="text-sm text-red-600 mb-4 font-mono bg-red-50 p-3 rounded-lg border border-red-100">{authError}</p>
+          <ul className="text-stone-600 text-sm text-left list-disc pl-5 space-y-2">
+            <li>Pastikan Anda sudah mengaktifkan <b>Anonymous Sign-in</b> di Firebase Authentication.</li>
+            <li>Pastikan semua variabel `VITE_FIREBASE_...` sudah benar di Vercel tanpa tanda kutip.</li>
+            <li>Lakukan <b>Redeploy</b> di Vercel jika Anda baru mengubah pengaturan.</li>
+          </ul>
+        </div>
+      </div>
+    );
+  }
 
   if (isLoading) {
     return <div className="h-screen flex flex-col items-center justify-center bg-[#f5f0eb] font-bold text-[#4a3b32]"><Icons.Refresh size={48} className="animate-spin mb-4" /> Memuat Sistem Kafe Jeda...</div>;
