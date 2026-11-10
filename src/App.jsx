@@ -4,14 +4,16 @@ import { createClient } from '@supabase/supabase-js';
 // ==========================================
 // SUPABASE CLIENT INITIALIZATION
 // ==========================================
-// Membaca kunci dengan format EXPLICIT agar Vite/Vercel bisa membacanya saat proses build.
-// (Kita gunakan typeof untuk mencegah error di layar Preview obrolan ini)
-const supabaseUrl = typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env.VITE_SUPABASE_URL : 'https://placeholder.supabase.co';
-const supabaseAnonKey = typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env.VITE_SUPABASE_ANON_KEY : 'placeholder';
+let supabaseUrl = 'https://placeholder.supabase.co';
+let supabaseAnonKey = 'placeholder';
 
-// Fallback error pencegah crash
-if (!supabaseUrl || supabaseUrl === 'https://placeholder.supabase.co') {
-  console.warn("Supabase URL tidak ditemukan. Menjalankan dalam mode lokal/demo.");
+try {
+  // Jika kunci kosong/undefined (karena Vercel belum membacanya), 
+  // sistem akan otomatis menggunakan placeholder agar web tidak layarnya putih (crash).
+  supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://placeholder.supabase.co';
+  supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'placeholder';
+} catch (error) {
+  // Mencegah error di layar Preview
 }
 
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
