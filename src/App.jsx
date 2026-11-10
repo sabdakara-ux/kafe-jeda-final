@@ -2,19 +2,12 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { createClient } from '@supabase/supabase-js';
 
 // ==========================================
-// SUPABASE CLIENT INITIALIZATION
+// SUPABASE CLIENT INITIALIZATION (DIPERBAIKI)
 // ==========================================
-let supabaseUrl = 'https://placeholder.supabase.co';
-let supabaseAnonKey = 'placeholder';
-
-try {
-  // Jika kunci kosong/undefined (karena Vercel belum membacanya), 
-  // sistem akan otomatis menggunakan placeholder agar web tidak layarnya putih (crash).
-  supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://placeholder.supabase.co';
-  supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'placeholder';
-} catch (error) {
-  // Mencegah error di layar Preview
-}
+// Vite mewajibkan penulisan kaku seperti ini tanpa dibungkus try/catch
+// agar Vercel dapat memasukkan kuncinya saat proses 'npm run build'.
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://placeholder.supabase.co';
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'placeholder';
 
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
@@ -813,11 +806,11 @@ const ViewTables = ({ tables, confirmAction, showToast, simulateScan }) => {
   const addTable = async () => {
     // --- CEK KONEKSI DATABASE ---
     if (supabaseUrl === 'https://placeholder.supabase.co') {
-      showToast('GAGAL: Kunci tidak terbaca! Anda wajib REDEPLOY di Vercel (atau cek file .env.local jika di VS Code)', 'error');
+      showToast('GAGAL: Kunci tidak terbaca! Anda wajib REDEPLOY di Vercel', 'error');
       return;
     }
     if (!supabaseUrl.startsWith('http')) {
-      showToast('GAGAL: URL Supabase salah! Harus berawalan https:// (Perbaiki di Vercel lalu Redeploy)', 'error');
+      showToast('GAGAL: URL Supabase salah! Harus berawalan https://', 'error');
       return;
     }
     // -----------------------------
@@ -1001,6 +994,14 @@ const ViewSettings = ({ settings, setSettings, showToast }) => {
         </div>
         <div className="pt-4 border-t"><Button type="submit" className="px-8">Simpan Perubahan</Button></div>
       </form>
+      
+      {/* PANEL DIAGNOSTIK */}
+      <div className="m-6 mt-0 p-4 bg-stone-800 text-green-400 font-mono text-xs rounded-xl overflow-x-auto">
+        <p className="font-bold text-white mb-2">--- DIAGNOSTIK KONEKSI DATABASE ---</p>
+        <p>URL Vercel Membaca: <span className="text-amber-400">"{supabaseUrl}"</span></p>
+        <p>Kunci Vercel Membaca: <span className="text-amber-400">"{supabaseAnonKey ? supabaseAnonKey.substring(0, 15) + '...' : 'KOSONG'}"</span></p>
+        <p className="text-stone-400 mt-2">// Pastikan URL di atas sesuai dan Kunci TIDAK KOSONG.</p>
+      </div>
     </div>
   );
 };
