@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
+import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, doc, setDoc, deleteDoc, onSnapshot, collection } from 'firebase/firestore';
 
 // ==========================================
@@ -9,27 +9,21 @@ import { getFirestore, doc, setDoc, deleteDoc, onSnapshot, collection } from 'fi
 let firebaseConfig = {};
 
 try {
-  // Mendukung Vercel ENV (Berdasarkan panduan Firebase terbaru)
-  if (typeof __firebase_config !== 'undefined') {
-    firebaseConfig = JSON.parse(__firebase_config);
-  } else {
-    firebaseConfig = {
-      apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-      authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-      projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-      storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-      messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-      appId: import.meta.env.VITE_FIREBASE_APP_ID
-    };
-  }
+  firebaseConfig = {
+    apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+    authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+    projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+    storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+    messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+    appId: import.meta.env.VITE_FIREBASE_APP_ID
+  };
 } catch (e) {
-  console.error("Gagal membaca konfigurasi Firebase");
+  console.error("Gagal membaca konfigurasi Firebase dari Vercel ENV.");
 }
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'kafe-jeda-prod';
 
 // --- ICONS (Lucide equivalents) ---
 const Icons = {
@@ -140,11 +134,7 @@ export default function App() {
   useEffect(() => {
     const initAuth = async () => {
       try {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
-        } else {
-          await signInAnonymously(auth);
-        }
+        await signInAnonymously(auth);
       } catch (error) {
         console.error("Gagal Authentikasi Firebase:", error);
         setAuthError(error.message);
@@ -162,31 +152,33 @@ export default function App() {
     if (!user) return;
     setIsLoading(true);
 
+    let pLoaded = false, tLoaded = false, oLoaded = false;
+    const checkLoaded = () => {
+      if (pLoaded && tLoaded && oLoaded) setIsLoading(false);
+    };
+
+    // MENDENGARKAN LANGSUNG DARI ROOT COLLECTION
     const unsubProducts = onSnapshot(
-      collection(db, 'artifacts', appId, 'public', 'data', 'products'),
-      (snap) => setProducts(snap.docs.map(d => ({id: d.id, ...d.data()}))),
-      (error) => console.error("Error products:", error)
+      collection(db, 'products'),
+      (snap) => { setProducts(snap.docs.map(d => ({id: d.id, ...d.data()}))); pLoaded = true; checkLoaded(); },
+      (error) => { console.error("Error products:", error); pLoaded = true; checkLoaded(); }
     );
 
     const unsubTables = onSnapshot(
-      collection(db, 'artifacts', appId, 'public', 'data', 'tables'),
-      (snap) => setTables(snap.docs.map(d => ({id: d.id, ...d.data()}))),
-      (error) => console.error("Error tables:", error)
+      collection(db, 'tables'),
+      (snap) => { setTables(snap.docs.map(d => ({id: d.id, ...d.data()}))); tLoaded = true; checkLoaded(); },
+      (error) => { console.error("Error tables:", error); tLoaded = true; checkLoaded(); }
     );
 
     const unsubOrders = onSnapshot(
-      collection(db, 'artifacts', appId, 'public', 'data', 'orders'),
+      collection(db, 'orders'),
       (snap) => {
         const data = snap.docs.map(d => ({id: d.id, ...d.data()}));
-        // Sortir di memori karena Firebase butuh indeks kompleks untuk query
         data.sort((a, b) => new Date(b.time) - new Date(a.time));
         setOrders(data);
-        setIsLoading(false);
+        oLoaded = true; checkLoaded();
       },
-      (error) => {
-        console.error("Error orders:", error);
-        setIsLoading(false);
-      }
+      (error) => { console.error("Error orders:", error); oLoaded = true; checkLoaded(); }
     );
 
     return () => { unsubProducts(); unsubTables(); unsubOrders(); };
@@ -209,10 +201,29 @@ export default function App() {
     }
   }, [receiptToPrint]);
 
+  // --- GLOBAL ERROR & LOADING SCREEN ---
+  if (authError) {
+    return (
+      <div className="h-screen flex flex-col items-center justify-center bg-[#f5f0eb] p-6 text-center">
+        <div className="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full border-t-4 border-red-500">
+          <Icons.X size={48} className="mx-auto text-red-500 mb-4" />
+          <h2 className="text-xl font-bold text-stone-800 mb-2">Koneksi Database Ditolak</h2>
+          <p className="text-sm text-red-600 mb-4 font-mono bg-red-50 p-3 rounded-lg border border-red-100">{authError}</p>
+          <ul className="text-stone-600 text-sm text-left list-disc pl-5 space-y-2">
+            <li>Pastikan Anda sudah mengaktifkan <b>Anonymous Sign-in</b> di Firebase Authentication.</li>
+            <li>Pastikan semua variabel `VITE_FIREBASE_...` sudah benar di Vercel tanpa spasi/tanda kutip.</li>
+          </ul>
+        </div>
+      </div>
+    );
+  }
+
+  if (isLoading) {
+    return <div className="h-screen flex flex-col items-center justify-center bg-[#f5f0eb] font-bold text-[#4a3b32]"><Icons.Refresh size={48} className="animate-spin mb-4" /> Memuat Data Kafe Jeda...</div>;
+  }
+
   // --- CUSTOMER MODE ---
   if (customerToken) {
-    if (isLoading) return <div className="h-screen flex items-center justify-center font-bold">Memuat Menu...</div>;
-
     const table = tables.find(t => t.token === customerToken);
     if (!table || !table.active) {
       return (
@@ -233,7 +244,7 @@ export default function App() {
         onSubmitOrder={async (newOrder) => {
           if(!user) return;
           try {
-            await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'orders', newOrder.id), newOrder);
+            await setDoc(doc(db, 'orders', newOrder.id), newOrder);
             showToast('Pesanan berhasil dikirim ke dapur!', 'success');
           } catch (e) {
             showToast('Gagal mengirim pesanan: ' + e.message, 'error');
@@ -246,27 +257,6 @@ export default function App() {
 
   // --- CASHIER MODE ---
   const pendingOrdersCount = orders.filter(o => o.status === 'pending').length;
-
-  if (authError) {
-    return (
-      <div className="h-screen flex flex-col items-center justify-center bg-[#f5f0eb] p-6 text-center">
-        <div className="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full border-t-4 border-red-500">
-          <Icons.X size={48} className="mx-auto text-red-500 mb-4" />
-          <h2 className="text-xl font-bold text-stone-800 mb-2">Koneksi Database Ditolak</h2>
-          <p className="text-sm text-red-600 mb-4 font-mono bg-red-50 p-3 rounded-lg border border-red-100">{authError}</p>
-          <ul className="text-stone-600 text-sm text-left list-disc pl-5 space-y-2">
-            <li>Pastikan Anda sudah mengaktifkan <b>Anonymous Sign-in</b> di Firebase Authentication.</li>
-            <li>Pastikan semua variabel `VITE_FIREBASE_...` sudah benar di Vercel tanpa tanda kutip.</li>
-            <li>Lakukan <b>Redeploy</b> di Vercel jika Anda baru mengubah pengaturan.</li>
-          </ul>
-        </div>
-      </div>
-    );
-  }
-
-  if (isLoading) {
-    return <div className="h-screen flex flex-col items-center justify-center bg-[#f5f0eb] font-bold text-[#4a3b32]"><Icons.Refresh size={48} className="animate-spin mb-4" /> Memuat Sistem Kafe Jeda...</div>;
-  }
 
   return (
     <div className="flex h-screen bg-[#f5f0eb] font-sans text-stone-800 overflow-hidden">
@@ -500,7 +490,7 @@ const ViewPOS = ({ products, tables, settings, user, showToast, setReceiptToPrin
     };
 
     try {
-      await setDoc(doc(getFirestore(), 'artifacts', typeof __app_id !== 'undefined' ? __app_id : 'kafe-jeda-prod', 'public', 'data', 'orders', newOrder.id), newOrder);
+      await setDoc(doc(getFirestore(), 'orders', newOrder.id), newOrder);
       showToast('Transaksi berhasil disimpan (Firebase)!', 'success');
       setReceiptToPrint(newOrder);
       setCart([]); setSelectedTable(''); setCashGiven(''); setIsPaymentModalOpen(false);
@@ -512,7 +502,6 @@ const ViewPOS = ({ products, tables, settings, user, showToast, setReceiptToPrin
 
   return (
     <div className="flex flex-col lg:flex-row h-full gap-4 overflow-hidden -m-4 md:-m-6 p-4 md:p-6">
-      {/* Product Grid */}
       <div className="flex-1 flex flex-col h-full bg-white rounded-2xl shadow-sm border border-stone-100 overflow-hidden">
         <div className="p-3 border-b flex gap-2 overflow-x-auto scrollbar-hide bg-stone-50">
           {categories.map(cat => (
@@ -538,7 +527,6 @@ const ViewPOS = ({ products, tables, settings, user, showToast, setReceiptToPrin
         </div>
       </div>
 
-      {/* Cart */}
       <div className="w-full lg:w-96 bg-white rounded-2xl shadow-sm border border-stone-100 flex flex-col h-[50vh] lg:h-full shrink-0">
         <div className="p-4 border-b bg-stone-50 rounded-t-2xl flex justify-between items-center">
           <h3 className="font-bold flex items-center gap-2"><Icons.ShoppingCart size={20}/> Keranjang</h3>
@@ -644,8 +632,7 @@ const ViewOrders = ({ orders, user, showToast, setReceiptToPrint }) => {
     if (!user) return;
     try {
       const db = getFirestore();
-      const appId = typeof __app_id !== 'undefined' ? __app_id : 'kafe-jeda-prod';
-      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'orders', id), { status: newStatus, ...extraData }, { merge: true });
+      await setDoc(doc(db, 'orders', id), { status: newStatus, ...extraData }, { merge: true });
       showToast(`Pesanan diperbarui menjadi ${newStatus}`, 'success');
     } catch (e) {
       showToast('Gagal update status: ' + e.message, 'error');
@@ -745,9 +732,9 @@ const ViewMenu = ({ products, user, confirmAction, showToast }) => {
 
     try {
       const db = getFirestore();
-      const appId = typeof __app_id !== 'undefined' ? __app_id : 'kafe-jeda-prod';
-      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'products', newId), productData);
-      showToast('Menu berhasil disimpan (Firebase)', 'success');
+      // PERBAIKAN: Menyimpan ke root collection "products"
+      await setDoc(doc(db, 'products', newId), productData);
+      showToast('Menu berhasil disimpan permanen', 'success');
       setIsModalOpen(false);
     } catch (e) {
       showToast('Gagal menyimpan: ' + e.message, 'error');
@@ -760,8 +747,7 @@ const ViewMenu = ({ products, user, confirmAction, showToast }) => {
       if(!user) return;
       try {
         const db = getFirestore();
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'kafe-jeda-prod';
-        await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'products', id));
+        await deleteDoc(doc(db, 'products', id));
         showToast('Menu dihapus', 'success');
       } catch(e) {
         showToast('Gagal menghapus: ' + e.message, 'error');
@@ -871,11 +857,11 @@ const ViewTables = ({ tables, user, showToast, simulateScan }) => {
     
     try {
       const db = getFirestore();
-      const appId = typeof __app_id !== 'undefined' ? __app_id : 'kafe-jeda-prod';
-      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'tables', newId), newTable);
-      showToast('Meja baru disimpan di DB', 'success');
+      // PERBAIKAN: Menyimpan ke root collection "tables"
+      await setDoc(doc(db, 'tables', newId), newTable);
+      showToast('Meja baru berhasil disimpan permanen', 'success');
     } catch(e) {
-      showToast('Gagal: ' + e.message, 'error');
+      showToast('Gagal menyimpan: ' + e.message, 'error');
     }
   };
 
@@ -883,8 +869,7 @@ const ViewTables = ({ tables, user, showToast, simulateScan }) => {
     if (!user) return;
     try {
       const db = getFirestore();
-      const appId = typeof __app_id !== 'undefined' ? __app_id : 'kafe-jeda-prod';
-      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'tables', t.id), { active: !t.active }, { merge: true });
+      await setDoc(doc(db, 'tables', t.id), { active: !t.active }, { merge: true });
     } catch(e) {
       showToast('Gagal: ' + e.message, 'error');
     }
