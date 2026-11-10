@@ -1,15 +1,35 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { createClient } from '@supabase/supabase-js';
+import React, { useState, useEffect } from 'react';
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
+import { getFirestore, doc, setDoc, deleteDoc, onSnapshot, collection } from 'firebase/firestore';
 
 // ==========================================
-// SUPABASE CLIENT INITIALIZATION (DIPERBAIKI)
+// FIREBASE CLIENT INITIALIZATION
 // ==========================================
-// Vite mewajibkan penulisan kaku seperti ini tanpa dibungkus try/catch
-// agar Vercel dapat memasukkan kuncinya saat proses 'npm run build'.
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://placeholder.supabase.co';
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'placeholder';
+let firebaseConfig = {};
 
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
+try {
+  // Mendukung Vercel ENV (Berdasarkan panduan Firebase terbaru)
+  if (typeof __firebase_config !== 'undefined') {
+    firebaseConfig = JSON.parse(__firebase_config);
+  } else {
+    firebaseConfig = {
+      apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+      authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+      projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+      storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+      messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+      appId: import.meta.env.VITE_FIREBASE_APP_ID
+    };
+  }
+} catch (e) {
+  console.error("Gagal membaca konfigurasi Firebase");
+}
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'kafe-jeda-prod';
 
 // --- ICONS (Lucide equivalents) ---
 const Icons = {
@@ -50,7 +70,6 @@ const GlobalStyles = () => (
   `}</style>
 );
 
-// --- REUSABLE COMPONENTS ---
 const Button = ({ children, onClick, variant = 'primary', className = '', disabled=false, type="button" }) => {
   const base = "px-4 py-2 rounded-lg font-semibold transition-colors flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed";
   const variants = {
@@ -85,13 +104,12 @@ const Modal = ({ isOpen, onClose, title, children }) => {
 // MAIN APPLICATION
 // ==========================================
 export default function App() {
-  // State Data dari Database
+  const [user, setUser] = useState(null);
   const [products, setProducts] = useState([]);
   const [tables, setTables] = useState([]);
   const [orders, setOrders] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   
-  // State Settings (Disimpan di localStorage agar sederhana)
   const [settings, setSettings] = useState(() => {
     const saved = localStorage.getItem('kafeJedaSettings');
     return saved ? JSON.parse(saved) : {
@@ -100,12 +118,10 @@ export default function App() {
     };
   });
   
-  // App State
   const [view, setView] = useState('dashboard');
   const [customerToken, setCustomerToken] = useState(null);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   
-  // Global Modals/Toasts
   const [toast, setToast] = useState(null);
   const [confirmDialog, setConfirmDialog] = useState(null);
   const [receiptToPrint, setReceiptToPrint] = useState(null);
@@ -119,68 +135,78 @@ export default function App() {
     setConfirmDialog({ title, msg, onConfirm });
   };
 
-  // --- MENGAMBIL DATA DARI SUPABASE ---
-  const fetchData = async () => {
-    setIsLoading(true);
-    try {
-      const [prodRes, tabRes, ordRes] = await Promise.all([
-        supabase.from('products').select('*'),
-        supabase.from('tables').select('*'),
-        supabase.from('orders').select('*').order('time', { ascending: false })
-      ]);
-      if (prodRes.data) setProducts(prodRes.data);
-      if (tabRes.data) setTables(tabRes.data);
-      if (ordRes.data) setOrders(ordRes.data);
-    } catch (error) {
-      console.error("Gagal mengambil data", error);
-      showToast("Gagal terhubung ke database", "error");
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // Setup Awal & Realtime Subscription
+  // 1. Inisialisasi Firebase Auth
   useEffect(() => {
-    fetchData();
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (error) {
+        console.error("Gagal Authentikasi Firebase:", error);
+      }
+    };
+    initAuth();
+    
+    const unsubscribe = onAuthStateChanged(auth, setUser);
+    return () => unsubscribe();
+  }, []);
 
-    // Deteksi URL untuk mode pelanggan
+  // 2. Listener Database (Realtime Sync Firebase)
+  useEffect(() => {
+    if (!user) return;
+    setIsLoading(true);
+
+    const unsubProducts = onSnapshot(
+      collection(db, 'artifacts', appId, 'public', 'data', 'products'),
+      (snap) => setProducts(snap.docs.map(d => ({id: d.id, ...d.data()}))),
+      (error) => console.error("Error products:", error)
+    );
+
+    const unsubTables = onSnapshot(
+      collection(db, 'artifacts', appId, 'public', 'data', 'tables'),
+      (snap) => setTables(snap.docs.map(d => ({id: d.id, ...d.data()}))),
+      (error) => console.error("Error tables:", error)
+    );
+
+    const unsubOrders = onSnapshot(
+      collection(db, 'artifacts', appId, 'public', 'data', 'orders'),
+      (snap) => {
+        const data = snap.docs.map(d => ({id: d.id, ...d.data()}));
+        // Sortir di memori karena Firebase butuh indeks kompleks untuk query
+        data.sort((a, b) => new Date(b.time) - new Date(a.time));
+        setOrders(data);
+        setIsLoading(false);
+      },
+      (error) => {
+        console.error("Error orders:", error);
+        setIsLoading(false);
+      }
+    );
+
+    return () => { unsubProducts(); unsubTables(); unsubOrders(); };
+  }, [user]);
+
+  // Cek token meja (Customer Mode)
+  useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const token = params.get('meja');
     if (token) setCustomerToken(token);
-
-    // Setup Supabase Realtime (Sinkronisasi Otomatis)
-    const channel = supabase.channel('public-db-changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, payload => {
-        // Jika ada pesanan baru/berubah, muat ulang daftar pesanan
-        supabase.from('orders').select('*').order('time', { ascending: false })
-          .then(({data}) => { if (data) setOrders(data); });
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, payload => {
-        supabase.from('products').select('*').then(({data}) => { if(data) setProducts(data); });
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'tables' }, payload => {
-        supabase.from('tables').select('*').then(({data}) => { if(data) setTables(data); });
-      })
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
   }, []);
 
-  // Simpan pengaturan ke localStorage jika berubah
   useEffect(() => {
     localStorage.setItem('kafeJedaSettings', JSON.stringify(settings));
   }, [settings]);
 
-  // --- PRINTING LOGIC ---
   useEffect(() => {
     if (receiptToPrint) {
       setTimeout(() => { window.print(); setReceiptToPrint(null); }, 300);
     }
   }, [receiptToPrint]);
 
-  // --- CUSTOMER MODE (Tampilan QR) ---
+  // --- CUSTOMER MODE ---
   if (customerToken) {
     if (isLoading) return <div className="h-screen flex items-center justify-center font-bold">Memuat Menu...</div>;
 
@@ -200,14 +226,14 @@ export default function App() {
 
     return (
       <CustomerApp 
-        table={table} products={products} settings={settings} orders={orders}
+        table={table} products={products} settings={settings} orders={orders} user={user}
         onSubmitOrder={async (newOrder) => {
-          const { error } = await supabase.from('orders').insert([newOrder]);
-          if (error) {
-            showToast('Gagal mengirim pesanan: ' + error.message, 'error');
-          } else {
+          if(!user) return;
+          try {
+            await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'orders', newOrder.id), newOrder);
             showToast('Pesanan berhasil dikirim ke dapur!', 'success');
-            // State orders akan update otomatis lewat Realtime channel
+          } catch (e) {
+            showToast('Gagal mengirim pesanan: ' + e.message, 'error');
           }
         }}
         onExit={() => setCustomerToken(null)} 
@@ -215,7 +241,7 @@ export default function App() {
     );
   }
 
-  // --- CASHIER MODE (SPA) ---
+  // --- CASHIER MODE ---
   const pendingOrdersCount = orders.filter(o => o.status === 'pending').length;
 
   if (isLoading) {
@@ -297,10 +323,10 @@ export default function App() {
         <main className="flex-1 overflow-y-auto overflow-x-hidden bg-stone-50">
           <div className="p-4 md:p-6 h-full max-w-7xl mx-auto">
             {view === 'dashboard' && <ViewDashboard orders={orders} products={products} />}
-            {view === 'pos' && <ViewPOS products={products} tables={tables} settings={settings} orders={orders} showToast={showToast} setReceiptToPrint={setReceiptToPrint} />}
-            {view === 'orders' && <ViewOrders orders={orders} showToast={showToast} setReceiptToPrint={setReceiptToPrint} />}
-            {view === 'menu' && <ViewMenu products={products} confirmAction={confirmAction} showToast={showToast} />}
-            {view === 'tables' && <ViewTables tables={tables} confirmAction={confirmAction} showToast={showToast} simulateScan={(token) => setCustomerToken(token)} />}
+            {view === 'pos' && <ViewPOS products={products} tables={tables} settings={settings} user={user} showToast={showToast} setReceiptToPrint={setReceiptToPrint} />}
+            {view === 'orders' && <ViewOrders orders={orders} user={user} showToast={showToast} setReceiptToPrint={setReceiptToPrint} />}
+            {view === 'menu' && <ViewMenu products={products} user={user} confirmAction={confirmAction} showToast={showToast} />}
+            {view === 'tables' && <ViewTables tables={tables} user={user} confirmAction={confirmAction} showToast={showToast} simulateScan={(token) => setCustomerToken(token)} />}
             {view === 'transactions' && <ViewTransactions orders={orders} setReceiptToPrint={setReceiptToPrint} />}
             {view === 'reports' && <ViewReports orders={orders} />}
             {view === 'settings' && <ViewSettings settings={settings} setSettings={setSettings} showToast={showToast} />}
@@ -391,7 +417,7 @@ const ViewDashboard = ({ orders, products }) => {
   );
 };
 
-const ViewPOS = ({ products, tables, settings, showToast, setReceiptToPrint }) => {
+const ViewPOS = ({ products, tables, settings, user, showToast, setReceiptToPrint }) => {
   const [cart, setCart] = useState([]);
   const [activeCat, setActiveCat] = useState('Semua');
   const [orderType, setOrderType] = useState('dine-in');
@@ -429,6 +455,7 @@ const ViewPOS = ({ products, tables, settings, showToast, setReceiptToPrint }) =
   };
 
   const processPayment = async () => {
+    if (!user) return showToast('Error auth', 'error');
     if (orderType === 'dine-in' && !selectedTable) {
       showToast('Pilih meja terlebih dahulu', 'error'); return;
     }
@@ -439,28 +466,28 @@ const ViewPOS = ({ products, tables, settings, showToast, setReceiptToPrint }) =
 
     setIsProcessing(true);
     const newOrder = {
-      id: `ORD-${Math.floor(100000 + Math.random() * 900000)}`, // Random ID ID
+      id: `ORD-${Math.floor(100000 + Math.random() * 900000)}`,
       tableId: orderType === 'dine-in' ? selectedTable : null,
       type: orderType,
-      status: 'completed', // Direct POS = done
+      status: 'completed',
       items: cart,
       subtotal, tax, service, total,
+      time: new Date().toISOString(),
       paymentMethod,
       paymentStatus: 'paid',
       cashReceived: paymentMethod === 'Cash' ? cashValue : null,
       change: paymentMethod === 'Cash' ? cashValue - total : 0
     };
 
-    const { error } = await supabase.from('orders').insert([newOrder]);
-    
-    setIsProcessing(false);
-    if (error) {
-      showToast('Gagal menyimpan transaksi: ' + error.message, 'error');
-    } else {
-      showToast('Transaksi berhasil disimpan!', 'success');
-      setReceiptToPrint(newOrder); // Print
+    try {
+      await setDoc(doc(getFirestore(), 'artifacts', typeof __app_id !== 'undefined' ? __app_id : 'kafe-jeda-prod', 'public', 'data', 'orders', newOrder.id), newOrder);
+      showToast('Transaksi berhasil disimpan (Firebase)!', 'success');
+      setReceiptToPrint(newOrder);
       setCart([]); setSelectedTable(''); setCashGiven(''); setIsPaymentModalOpen(false);
+    } catch (e) {
+      showToast('Gagal menyimpan transaksi: ' + e.message, 'error');
     }
+    setIsProcessing(false);
   };
 
   return (
@@ -478,8 +505,8 @@ const ViewPOS = ({ products, tables, settings, showToast, setReceiptToPrint }) =
         <div className="flex-1 overflow-y-auto p-4 grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-4 bg-stone-100/50">
           {activeProducts.map(p => (
             <div key={p.id} onClick={() => addToCart(p)} className="bg-white rounded-xl shadow-sm hover:shadow-md cursor-pointer overflow-hidden border border-stone-100 flex flex-col group active:scale-95 transition-transform">
-              <div className="h-32 bg-stone-200 relative overflow-hidden">
-                {p.image && <img src={p.image} alt={p.name} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300" />}
+              <div className="h-32 bg-stone-200 relative overflow-hidden flex items-center justify-center">
+                {p.image ? <img src={p.image} alt={p.name} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300" /> : <Icons.Coffee size={40} className="text-stone-400 opacity-50"/>}
                 <div className="absolute top-2 right-2 bg-white/90 px-2 py-0.5 rounded text-xs font-bold text-[#4a3b32]">{p.category}</div>
               </div>
               <div className="p-3 flex flex-col flex-1">
@@ -590,16 +617,18 @@ const ViewPOS = ({ products, tables, settings, showToast, setReceiptToPrint }) =
   );
 };
 
-const ViewOrders = ({ orders, showToast, setReceiptToPrint }) => {
+const ViewOrders = ({ orders, user, showToast, setReceiptToPrint }) => {
   const activeOrders = orders.filter(o => ['pending', 'processing', 'ready'].includes(o.status));
 
   const updateStatus = async (id, newStatus, extraData = {}) => {
-    const { error } = await supabase.from('orders').update({ status: newStatus, ...extraData }).eq('id', id);
-    if (error) {
-      showToast('Gagal update status: ' + error.message, 'error');
-    } else {
+    if (!user) return;
+    try {
+      const db = getFirestore();
+      const appId = typeof __app_id !== 'undefined' ? __app_id : 'kafe-jeda-prod';
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'orders', id), { status: newStatus, ...extraData }, { merge: true });
       showToast(`Pesanan diperbarui menjadi ${newStatus}`, 'success');
-      // Tidak perlu setOrders manual, realtime channel akan otomatis merender ulang.
+    } catch (e) {
+      showToast('Gagal update status: ' + e.message, 'error');
     }
   };
 
@@ -672,16 +701,20 @@ const ViewOrders = ({ orders, showToast, setReceiptToPrint }) => {
   );
 };
 
-const ViewMenu = ({ products, confirmAction, showToast }) => {
+const ViewMenu = ({ products, user, confirmAction, showToast }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editItem, setEditItem] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
 
   const handleSave = async (e) => {
     e.preventDefault();
+    if (!user) return showToast('Error Auth', 'error');
     setIsSaving(true);
+    
     const formData = new FormData(e.target);
+    const newId = editItem ? editItem.id : `p${Date.now()}`;
     const productData = {
+      id: newId,
       name: formData.get('name'),
       category: formData.get('category'),
       price: parseInt(formData.get('price')),
@@ -690,29 +723,29 @@ const ViewMenu = ({ products, confirmAction, showToast }) => {
       desc: formData.get('desc'),
     };
 
-    let error;
-    if (editItem) {
-      const res = await supabase.from('products').update(productData).eq('id', editItem.id);
-      error = res.error;
-    } else {
-      const res = await supabase.from('products').insert([productData]);
-      error = res.error;
-    }
-
-    setIsSaving(false);
-    if (error) {
-      showToast('Gagal menyimpan: ' + error.message, 'error');
-    } else {
-      showToast('Menu berhasil disimpan (Database Updated)', 'success');
+    try {
+      const db = getFirestore();
+      const appId = typeof __app_id !== 'undefined' ? __app_id : 'kafe-jeda-prod';
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'products', newId), productData);
+      showToast('Menu berhasil disimpan (Firebase)', 'success');
       setIsModalOpen(false);
+    } catch (e) {
+      showToast('Gagal menyimpan: ' + e.message, 'error');
     }
+    setIsSaving(false);
   };
 
   const handleDelete = (id) => {
     confirmAction('Hapus Menu', 'Yakin ingin menghapus menu ini dari database?', async () => {
-      const { error } = await supabase.from('products').delete().eq('id', id);
-      if (error) showToast('Gagal menghapus: ' + error.message, 'error');
-      else showToast('Menu dihapus', 'success');
+      if(!user) return;
+      try {
+        const db = getFirestore();
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'kafe-jeda-prod';
+        await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'products', id));
+        showToast('Menu dihapus', 'success');
+      } catch(e) {
+        showToast('Gagal menghapus: ' + e.message, 'error');
+      }
     });
   };
 
@@ -737,8 +770,8 @@ const ViewMenu = ({ products, confirmAction, showToast }) => {
             {products.map(p => (
               <tr key={p.id} className="hover:bg-stone-50 transition-colors">
                 <td className="p-4 flex items-center gap-3">
-                  <div className="w-12 h-12 bg-stone-200 rounded-lg overflow-hidden shrink-0">
-                    {p.image && <img src={p.image} alt="" className="w-full h-full object-cover" />}
+                  <div className="w-12 h-12 bg-stone-200 rounded-lg overflow-hidden flex items-center justify-center shrink-0">
+                    {p.image ? <img src={p.image} alt="" className="w-full h-full object-cover" /> : <Icons.Coffee className="text-stone-400 opacity-50" />}
                   </div>
                   <div>
                     <p className="font-bold text-stone-800">{p.name}</p>
@@ -800,38 +833,41 @@ const ViewMenu = ({ products, confirmAction, showToast }) => {
   );
 };
 
-const ViewTables = ({ tables, confirmAction, showToast, simulateScan }) => {
+const ViewTables = ({ tables, user, showToast, simulateScan }) => {
   const [qrModal, setQrModal] = useState(null);
 
   const addTable = async () => {
-    // --- CEK KONEKSI DATABASE ---
-    if (supabaseUrl === 'https://placeholder.supabase.co') {
-      showToast('GAGAL: Kunci tidak terbaca! Anda wajib REDEPLOY di Vercel', 'error');
-      return;
-    }
-    if (!supabaseUrl.startsWith('http')) {
-      showToast('GAGAL: URL Supabase salah! Harus berawalan https://', 'error');
-      return;
-    }
-    // -----------------------------
+    if (!user) return showToast('Tunggu koneksi Firebase', 'error');
 
     const numStr = (tables.length + 1).toString().padStart(2, '0');
+    const newId = `t${Date.now()}`;
     const newTable = {
-      id: `t${Date.now()}`,
+      id: newId,
       number: numStr,
       name: `Meja ${numStr}`,
       token: `JEDA-${Math.random().toString(36).substr(2, 6).toUpperCase()}`,
       active: true
     };
-    const { error } = await supabase.from('tables').insert([newTable]);
-    if(error) showToast('Gagal: ' + error.message, 'error');
-    else showToast('Meja baru disimpan di DB', 'success');
+    
+    try {
+      const db = getFirestore();
+      const appId = typeof __app_id !== 'undefined' ? __app_id : 'kafe-jeda-prod';
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'tables', newId), newTable);
+      showToast('Meja baru disimpan di DB', 'success');
+    } catch(e) {
+      showToast('Gagal: ' + e.message, 'error');
+    }
   };
 
   const toggleTable = async (t) => {
-    if (supabaseUrl === 'https://placeholder.supabase.co') return showToast('GAGAL: Kunci tidak terbaca. Wajib Redeploy Vercel!', 'error');
-    const { error } = await supabase.from('tables').update({ active: !t.active }).eq('id', t.id);
-    if(error) showToast('Gagal: ' + error.message, 'error');
+    if (!user) return;
+    try {
+      const db = getFirestore();
+      const appId = typeof __app_id !== 'undefined' ? __app_id : 'kafe-jeda-prod';
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'tables', t.id), { active: !t.active }, { merge: true });
+    } catch(e) {
+      showToast('Gagal: ' + e.message, 'error');
+    }
   };
 
   return (
@@ -866,7 +902,7 @@ const ViewTables = ({ tables, confirmAction, showToast, simulateScan }) => {
                <img src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(window.location.origin + window.location.pathname + '?meja=' + qrModal.token)}`} alt="QR" className="w-48 h-48" />
             </div>
             <p className="text-sm text-center text-stone-600 mb-6 max-w-xs">
-              Cetak QR ini. Pelanggan cukup scan untuk memesan (Data akan langsung masuk ke database Anda).
+              Cetak QR ini. Pelanggan cukup scan untuk memesan (Data akan masuk otomatis ke Firebase).
             </p>
           </div>
         )}
@@ -994,14 +1030,6 @@ const ViewSettings = ({ settings, setSettings, showToast }) => {
         </div>
         <div className="pt-4 border-t"><Button type="submit" className="px-8">Simpan Perubahan</Button></div>
       </form>
-      
-      {/* PANEL DIAGNOSTIK */}
-      <div className="m-6 mt-0 p-4 bg-stone-800 text-green-400 font-mono text-xs rounded-xl overflow-x-auto">
-        <p className="font-bold text-white mb-2">--- DIAGNOSTIK KONEKSI DATABASE ---</p>
-        <p>URL Vercel Membaca: <span className="text-amber-400">"{supabaseUrl}"</span></p>
-        <p>Kunci Vercel Membaca: <span className="text-amber-400">"{supabaseAnonKey ? supabaseAnonKey.substring(0, 15) + '...' : 'KOSONG'}"</span></p>
-        <p className="text-stone-400 mt-2">// Pastikan URL di atas sesuai dan Kunci TIDAK KOSONG.</p>
-      </div>
     </div>
   );
 };
@@ -1053,8 +1081,7 @@ const CustomerApp = ({ table, products, settings, orders, onSubmitOrder, onExit 
   const [activeCat, setActiveCat] = useState('Semua');
   const [view, setView] = useState('menu');
 
-  // Menggunakan data orders dari Realtime Supabase (dikirim lewat props)
-  const myOrders = orders.filter(o => o.tableId === table.id && o.type === 'qr').sort((a,b) => new Date(b.time) - new Date(a.time));
+  const myOrders = orders.filter(o => o.tableId === table.id && o.type === 'qr');
   const activeOrder = myOrders.find(o => ['pending', 'processing', 'ready'].includes(o.status));
 
   useEffect(() => {
@@ -1103,6 +1130,7 @@ const CustomerApp = ({ table, products, settings, orders, onSubmitOrder, onExit 
       status: 'pending',
       items: cart,
       subtotal, tax, service, total,
+      time: new Date().toISOString(),
       paymentMethod: null,
       paymentStatus: 'unpaid'
     };
@@ -1179,7 +1207,7 @@ const CustomerApp = ({ table, products, settings, orders, onSubmitOrder, onExit 
                 const qty = getQty(p.id);
                 return (
                   <div key={p.id} className="bg-white rounded-2xl p-3 shadow-sm border border-stone-100 flex gap-4">
-                    {p.image && <img src={p.image} alt="" className="w-24 h-24 object-cover rounded-xl bg-stone-200 shrink-0" />}
+                    {p.image ? <img src={p.image} alt="" className="w-24 h-24 object-cover rounded-xl shrink-0" /> : <div className="w-24 h-24 rounded-xl bg-stone-200 flex items-center justify-center shrink-0"><Icons.Coffee className="text-stone-400"/></div>}
                     <div className="flex flex-col flex-1 py-1">
                       <h4 className="font-bold text-stone-800 leading-tight">{p.name}</h4>
                       <div className="mt-auto pt-2 flex items-center justify-between">
@@ -1188,9 +1216,9 @@ const CustomerApp = ({ table, products, settings, orders, onSubmitOrder, onExit 
                           <button onClick={() => updateCart(p, 1)} className="bg-[#4a3b32] text-white px-3 py-1.5 rounded-full text-xs font-bold shadow-sm">Tambah</button>
                         ) : (
                           <div className="flex items-center gap-2 bg-stone-100 rounded-full p-1">
-                            <button onClick={() => updateCart(p, -1)} className="p-1.5 bg-white"><Icons.Minus size={12}/></button>
+                            <button onClick={() => updateCart(p, -1)} className="p-1.5 bg-white rounded-full"><Icons.Minus size={12}/></button>
                             <span className="font-bold w-4 text-center text-sm">{qty}</span>
-                            <button onClick={() => updateCart(p, 1)} className="p-1.5 bg-[#4a3b32] text-white"><Icons.Plus size={12}/></button>
+                            <button onClick={() => updateCart(p, 1)} className="p-1.5 bg-[#4a3b32] text-white rounded-full"><Icons.Plus size={12}/></button>
                           </div>
                         )}
                       </div>
@@ -1219,4 +1247,4 @@ const CustomerApp = ({ table, products, settings, orders, onSubmitOrder, onExit 
       )}
     </div>
   );
-};
+}
