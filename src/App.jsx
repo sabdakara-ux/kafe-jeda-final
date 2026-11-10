@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { createClient } from '@supabase/supabase-js';
 
 // ==========================================
 // SUPABASE CLIENT INITIALIZATION
 // ==========================================
-// Mengambil kunci dengan aman (mencegah crash di Preview dan tetap bekerja di Vercel)
+// Mengambil kunci dengan aman
 const env = typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env : {};
-const supabaseUrl = env.https://zlgxfaxzswrsuztyecfw.supabase.co/rest/v1/;
-const supabaseAnonKey = env.sb_publishable_pfcxXFwedZOuCEbxFWA_Tw__nuI68dK;
+const supabaseUrl = env.VITE_SUPABASE_URL;
+const supabaseAnonKey = env.VITE_SUPABASE_ANON_KEY;
 
 // Fallback error pencegah crash jika .env belum diset
 if (!supabaseUrl || !supabaseAnonKey) {
