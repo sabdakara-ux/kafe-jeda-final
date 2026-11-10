@@ -4,20 +4,17 @@ import { createClient } from '@supabase/supabase-js';
 // ==========================================
 // SUPABASE CLIENT INITIALIZATION
 // ==========================================
-// Mengambil kunci dengan aman
-const env = typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env : {};
-const supabaseUrl = env.VITE_SUPABASE_URL;
-const supabaseAnonKey = env.VITE_SUPABASE_ANON_KEY;
+// Membaca kunci dengan format EXPLICIT agar Vite/Vercel bisa membacanya saat proses build.
+// (Kita gunakan typeof untuk mencegah error di layar Preview obrolan ini)
+const supabaseUrl = typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env.VITE_SUPABASE_URL : 'https://placeholder.supabase.co';
+const supabaseAnonKey = typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env.VITE_SUPABASE_ANON_KEY : 'placeholder';
 
-// Fallback error pencegah crash jika .env belum diset
-if (!supabaseUrl || !supabaseAnonKey) {
-  console.error("Supabase URL atau Key tidak ditemukan. Pastikan file .env.local sudah dibuat.");
+// Fallback error pencegah crash
+if (!supabaseUrl || supabaseUrl === 'https://placeholder.supabase.co') {
+  console.warn("Supabase URL tidak ditemukan. Menjalankan dalam mode lokal/demo.");
 }
 
-const supabase = createClient(
-  supabaseUrl || 'https://placeholder.supabase.co', 
-  supabaseAnonKey || 'placeholder'
-);
+const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 // --- ICONS (Lucide equivalents) ---
 const Icons = {
