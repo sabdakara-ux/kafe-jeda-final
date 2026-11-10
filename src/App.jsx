@@ -6,8 +6,8 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 // ==========================================
 // Mengambil kunci dengan aman (mencegah crash di Preview dan tetap bekerja di Vercel)
 const env = typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env : {};
-const supabaseUrl = env.VITE_SUPABASE_URL;
-const supabaseAnonKey = env.VITE_SUPABASE_ANON_KEY;
+const supabaseUrl = env.https://zlgxfaxzswrsuztyecfw.supabase.co/rest/v1/;
+const supabaseAnonKey = env.sb_publishable_pfcxXFwedZOuCEbxFWA_Tw__nuI68dK;
 
 // Fallback error pencegah crash jika .env belum diset
 if (!supabaseUrl || !supabaseAnonKey) {
